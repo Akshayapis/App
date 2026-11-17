@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>U APP Admin</title>
+<style>
+:root{--bg:#0b0f1a;--bg2:#131a2b;--line:#232c45;--tx:#e6e8f0;--mu:#8b93c9;--p1:#7c5cff;--p2:#3ea0ff}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+.hidden{display:none!important}
+.wrap{max-width:560px;margin:0 auto;padding:20px 16px}
+h1{font-size:22px;margin:0 0 14px}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px}
+.tab{padding:8px 14px;border-radius:99px;background:#121a2e;border:1px solid var(--line);font-size:13px;white-space:nowrap;cursor:pointer}
+.tab.on{background:var(--p1);border-color:var(--p1)}
+.box{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+label{font-size:12px;color:var(--mu);font-weight:600;display:block;margin-top:10px}
+input{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#0e1424;color:var(--tx);margin:4px 0;font-size:14px}
+.btn{display:block;width:100%;padding:12px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--p1),var(--p2));color:#fff;font-weight:700;margin-top:10px}
+.mini{border:0;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;background:#1b2440;color:#cdd3f2;margin-left:6px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat small{color:var(--mu);font-size:11px;display:block}.stat b{font-size:20px}
+.pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;background:#1b2440}
+.msg{font-size:13px;color:var(--mu);margin-top:8px}.err{color:#ff9bb0}
+</style></head><body><div class="wrap">
+<h1>U APP Admin</h1>
+
+<div id="authBox" class="box">
+  <label>Email</label><input id="em" placeholder="you@example.com">
+  <div id="codeBox" class="hidden"><label>6-digit code</label><input id="code" inputmode="numeric" maxlength="6"></div>
+  <button class="btn" id="otpBtn" onclick="sendOtp()">Send code</button>
+  <div class="msg" id="authMsg"></div>
+</div>
+
+<div id="gate" class="box hidden">
+  <p class="msg">You're logged in but not an admin. Enter the admin setup key (ADMIN_SETUP_KEY on the server).</p>
+  <input id="ak" type="password" placeholder="setup key">
+  <button class="btn" onclick="bootstrap()">Unlock admin access</button>
+  <div class="msg" id="gateMsg"></div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="tabs">
+    <div class="tab on" data-v="overview" onclick="go('overview')">Overview</div>
+    <div class="tab" data-v="builds" onclick="go('builds')">Builds</div>
+    <div class="tab" data-v="payments" onclick="go('payments')">Payments</div>
+    <div class="tab" data-v="settings" onclick="go('settings')">Settings</div>
+  </div>
+  <div id="main"></div>
+</div>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+var firebaseConfig = { apiKey: 'REPLACE_WITH_FIREBASE_API_KEY', authDomain: 'REPLACE.firebaseapp.com',
+  projectId: 'REPLACE', databaseURL: 'https://REPLACE-default-rtdb.firebaseio.com', storageBucket: 'REPLACE.appspot.com',
+  messagingSenderId: 'REPLACE', appId: 'REPLACE' };
+firebase.initializeApp(firebaseConfig);
+var fbAuth = firebase.auth();
+var idToken='', isAdmin=false, view='overview';
+function $(i){return document.getElementById(i)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function api(path,method,body){
+  var r=await fetch(path,{method:method||'GET',headers:Object.assign({'Content-Type':'application/json'},idToken?{Authorization:'Bearer '+idToken}:{}),body:body?JSON.stringify(body):undefined});
+  var d=await r.json().catch(()=>({}));
+  if(!r.ok||d.success===false) throw new Error(d.message||('Error '+r.status));
+  return d;
+}
+var otpSent=false;
+function sendOtp(){
+  var email=$('em').value.trim();
+  if(!otpSent){
+    api('/api/otp/send','POST',{email:email}).then(function(){ otpSent=true; $('codeBox').classList.remove('hidden'); $('otpBtn').textContent='Verify & login'; $('authMsg').textContent='Code sent' })
+    .catch(function(e){$('authMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'})
+  } else {
+    api('/api/otp/verify','POST',{email:email,code:$('code').value}).then(function(d){ return fbAuth.signInWithCustomToken(d.customToken) })
+    .catch(function(e){$('authMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'})
+  }
+}
+fbAuth.onAuthStateChanged(function(u){
+  if(u){ u.getIdToken().then(function(t){ idToken=t; boot() }) }
+  else { $('authBox').classList.remove('hidden'); $('gate').classList.add('hidden'); $('app').classList.add('hidden') }
+});
+async function bootstrap(){
+  try{ await api('/api/admin/bootstrap','POST',{code:$('ak').value}); boot() }catch(e){ $('gateMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>' }
+}
+async function boot(){
+  var d=await api('/api/auth/sync','POST',{}); isAdmin=d.isAdmin;
+  $('authBox').classList.add('hidden');
+  if(!isAdmin){ $('gate').classList.remove('hidden'); $('app').classList.add('hidden'); return }
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  go('overview');
+}
+function go(v){ view=v; document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v)); render() }
+async function render(){
+  var m=$('main'); m.innerHTML='<p class="msg">Loading...</p>';
+  try{
+    if(view==='overview'){ var d=await api('/api/admin/overview');
+      var st=Object.keys(d.byStatus||{}).map(k=>'<div class="row"><span>'+esc(k)+'</span><b>'+d.byStatus[k]+'</b></div>').join('');
+      m.innerHTML='<div class="g"><div class="box stat"><small>Total users</small><b>'+d.totalUsers+'</b></div><div class="box stat"><small>Total builds</small><b>'+d.totalBuilds+'</b></div></div><div class="box">'+(st||'<p class="msg">No builds yet.</p>')+'</div>';
+    } else if(view==='builds'){ var d=await api('/api/admin/builds');
+      m.innerHTML = d.builds.map(b=>'<div class="box"><div class="row"><span>'+esc(b.appName)+' ('+esc(b.packageName)+')</span><span class="pill">'+esc(b.status)+'</span></div><div class="row"><small style="color:var(--mu)">'+esc(b.websiteUrl)+'</small></div>'+(b.error?'<div class="row"><small style="color:#ff9bb0">'+esc(b.error)+'</small></div>':'')+'</div>').join('') || '<p class="msg">No builds yet.</p>';
+    } else if(view==='payments'){ var d=await api('/api/admin/payments/pending');
+      m.innerHTML = d.payments.length ? d.payments.map(p=>'<div class="box"><div class="row"><span>Order '+esc(p.id)+'</span><span class="pill">\u20B9'+p.amount+'</span></div><div class="row"><small>UTR: '+esc(p.utr)+'</small><button class="mini" onclick="approve(\''+p.id+'\')">Approve</button></div></div>').join('') : '<p class="msg">No pending payments.</p>';
+    } else if(view==='settings'){ var d=await api('/api/admin/settings'); var s=d.settings;
+      m.innerHTML = settingsForm(s);
+    }
+  }catch(e){ m.innerHTML='<p class="msg err">'+esc(e.message)+'</p>' }
+}
+async function approve(orderId){ try{ await api('/api/admin/payments/approve','POST',{orderId:orderId}); render() }catch(e){ alert(e.message) } }
+function field(label,key,val,type){ return '<label>'+label+'</label><input id="s_'+key+'" value="'+esc(val==null?'':val)+'"'+(type?' type="'+type+'"':'')+'>' }
+function settingsForm(s){
+  return '<div class="box"><b>OTP email</b>'+
+    field('OTP API base','otpApiBase',s.otpApiBase)+field('Send path','otpSendPath',s.otpSendPath)+field('Verify path','otpVerifyPath',s.otpVerifyPath)+
+    field('TTL (seconds)','otpTtlSeconds',s.otpTtlSeconds)+field('Resend cooldown (s)','otpResendSeconds',s.otpResendSeconds)+field('Max attempts','otpMaxAttempts',s.otpMaxAttempts)+
+    field('Support email','supportEmail',s.supportEmail)+'</div>'+
+  '<div class="box"><b>GitHub build service</b>'+
+    field('Owner','ghOwner',s.ghOwner)+field('Repo','ghRepo',s.ghRepo)+field('Workflow file','ghWorkflow',s.ghWorkflow)+field('Ref/branch','ghRef',s.ghRef)+
+    field('Token (leave blank to keep current: '+esc(s.ghToken)+')','ghToken','')+'</div>'+
+  '<div class="box"><b>Build delivery</b>'+field('Download link TTL (s)','downloadTtlSeconds',s.downloadTtlSeconds)+field('Max upload MB','maxUploadMb',s.maxUploadMb)+'</div>'+
+  '<div class="box"><b>Payments (UPI)</b>'+field('UPI ID','upiId',s.upiId)+field('Payee name','upiPayeeName',s.upiPayeeName)+field('Price per build (INR, 0 = free)','buildPriceInr',s.buildPriceInr)+'</div>'+
+  '<div class="box"><b>API hardening</b>'+field('API key pepper (leave blank to keep current: '+esc(s.apiKeyPepper)+')','apiKeyPepper','')+
+    field('Rate limit window (s)','rateLimitWindowSeconds',s.rateLimitWindowSeconds)+field('Rate limit max requests','rateLimitMaxRequests',s.rateLimitMaxRequests)+'</div>'+
+  '<button class="btn" onclick="saveSettings()">Save settings</button><div class="msg" id="setMsg"></div>';
+}
+async function saveSettings(){
+  var keys=['otpApiBase','otpSendPath','otpVerifyPath','otpTtlSeconds','otpResendSeconds','otpMaxAttempts','supportEmail',
+    'ghOwner','ghRepo','ghWorkflow','ghRef','ghToken','downloadTtlSeconds','maxUploadMb','upiId','upiPayeeName','buildPriceInr','apiKeyPepper','rateLimitWindowSeconds','rateLimitMaxRequests'];
+  var patch={};
+  keys.forEach(function(k){ var el=$('s_'+k); if(!el)return; var v=el.value; if(k==='ghToken'||k==='apiKeyPepper'){ if(v==='')return } patch[k]=v });
+  try{ await api('/api/admin/settings','POST',patch); $('setMsg').textContent='Saved' }catch(e){ $('setMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>' }
+}
+</script></body></html>

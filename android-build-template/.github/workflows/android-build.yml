@@ -1,0 +1,60 @@
+name: android-build
+run-name: build-${{ github.event.inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "U APP internal build request id (used to find this run later)"
+        required: true
+      website_url:
+        description: "Website the app should wrap"
+        required: true
+      app_name:
+        description: "App name shown on the home screen"
+        required: true
+      package_name:
+        description: "Android package name, e.g. com.example.myapp"
+        required: true
+      icon_url:
+        description: "Direct URL to a PNG icon (optional)"
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Set app icon
+        run: |
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          if [ -n "${{ github.event.inputs.icon_url }}" ]; then
+            curl -fsSL "${{ github.event.inputs.icon_url }}" -o android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || cp android/default-icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          else
+            cp android/default-icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          fi
+
+      - name: Build APK
+        working-directory: android
+        run: >
+          gradle assembleDebug
+          -PappId="${{ github.event.inputs.package_name }}"
+          -PappName="${{ github.event.inputs.app_name }}"
+          -PsiteUrl="${{ github.event.inputs.website_url }}"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ github.event.inputs.request_id }}
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 1

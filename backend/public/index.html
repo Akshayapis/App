@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>U APP — turn your website into an app</title>
+<style>
+:root{--bg:#0b0f1a;--bg2:#131a2b;--line:#232c45;--tx:#e6e8f0;--mu:#8b93c9;--p1:#7c5cff;--p2:#3ea0ff}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+.hidden{display:none!important}
+.wrap{max-width:480px;margin:0 auto;padding:24px 18px}
+h1{font-size:24px;margin:0 0 4px}p.s{color:var(--mu);margin:0 0 20px;font-size:13px}
+.box{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+label{font-size:12px;color:var(--mu);font-weight:600}
+input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#0e1424;color:var(--tx);margin:6px 0;font-size:15px}
+.btn{display:block;width:100%;padding:13px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--p1),var(--p2));color:#fff;font-weight:700;margin-top:8px}
+.btn.o{background:#0e1424;border:1px solid var(--line);color:var(--tx)}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}
+.pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;background:#1b2440}
+.pill.success{background:#103a24;color:#7af0ae}.pill.failed{background:#3a1420;color:#ff9bb0}
+.msg{font-size:13px;color:var(--mu);margin-top:8px}.err{color:#ff9bb0}
+</style></head><body><div class="wrap">
+<h1>U APP</h1><p class="s">Turn any website into an Android app</p>
+
+<div id="authBox" class="box">
+  <label>Email</label><input id="em" type="email" placeholder="you@example.com">
+  <div id="codeBox" class="hidden"><label>6-digit code</label><input id="code" inputmode="numeric" maxlength="6"></div>
+  <button class="btn" id="otpBtn" onclick="sendOtp()">Send code</button>
+  <div class="msg" id="authMsg"></div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="box">
+    <label>Website URL</label><input id="url" placeholder="https://example.com">
+    <label>App name</label><input id="an" placeholder="My App">
+    <label>Package name</label><input id="pkg" placeholder="com.example.myapp">
+    <label>Icon (PNG, optional)</label><input id="icon" type="file" accept="image/png,image/jpeg">
+    <button class="btn" onclick="createApp()">Build my app</button>
+    <div class="msg" id="createMsg"></div>
+  </div>
+  <div class="box"><b>Your builds</b><div id="list"></div></div>
+</div>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+var firebaseConfig = { apiKey: 'REPLACE_WITH_FIREBASE_API_KEY', authDomain: 'REPLACE.firebaseapp.com',
+  projectId: 'REPLACE', databaseURL: 'https://REPLACE-default-rtdb.firebaseio.com', storageBucket: 'REPLACE.appspot.com',
+  messagingSenderId: 'REPLACE', appId: 'REPLACE' };
+firebase.initializeApp(firebaseConfig);
+var fbAuth = firebase.auth();
+var idToken='', pollTimer=null;
+function $(i){return document.getElementById(i)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function api(path,method,body,isForm){
+  var r=await fetch(path,{method:method||'GET',headers:isForm?(idToken?{Authorization:'Bearer '+idToken}:{}):Object.assign({'Content-Type':'application/json'},idToken?{Authorization:'Bearer '+idToken}:{}),body:isForm?body:(body?JSON.stringify(body):undefined)});
+  var d=await r.json().catch(()=>({}));
+  if(!r.ok||d.success===false) throw new Error(d.message||('Error '+r.status));
+  return d;
+}
+var otpSent=false;
+function sendOtp(){
+  var email=$('em').value.trim();
+  if(!otpSent){
+    api('/api/otp/send','POST',{email:email}).then(function(){ otpSent=true; $('codeBox').classList.remove('hidden'); $('otpBtn').textContent='Verify & login'; $('authMsg').textContent='Code sent to '+email })
+    .catch(function(e){$('authMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'})
+  } else {
+    api('/api/otp/verify','POST',{email:email,code:$('code').value}).then(function(d){
+      return fbAuth.signInWithCustomToken(d.customToken)
+    }).catch(function(e){$('authMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'})
+  }
+}
+fbAuth.onAuthStateChanged(function(u){
+  if(u){ u.getIdToken().then(function(t){ idToken=t; boot() }) }
+  else { $('authBox').classList.remove('hidden'); $('app').classList.add('hidden') }
+});
+async function boot(){
+  await api('/api/auth/sync','POST',{});
+  $('authBox').classList.add('hidden'); $('app').classList.remove('hidden');
+  loadList();
+  clearInterval(pollTimer); pollTimer=setInterval(loadList,8000);
+}
+async function createApp(){
+  var fd=new FormData();
+  fd.append('websiteUrl',$('url').value.trim());
+  fd.append('appName',$('an').value.trim());
+  fd.append('packageName',$('pkg').value.trim());
+  if($('icon').files[0]) fd.append('icon',$('icon').files[0]);
+  try{ var d=await api('/api/apps','POST',fd,true);
+    $('createMsg').textContent = d.payUrl ? 'Payment required — opening payment page...' : 'Build queued!';
+    if(d.payUrl) location.href=d.payUrl;
+    loadList();
+  }catch(e){ $('createMsg').innerHTML='<span class="err">'+esc(e.message)+'</span>' }
+}
+async function loadList(){
+  try{ var d=await api('/api/apps'); var el=$('list');
+    el.innerHTML = d.builds.length ? d.builds.map(function(b){
+      var cls=b.status==='success'?'success':(b.status==='failed'?'failed':'');
+      return '<div class="row"><span>'+esc(b.appName)+'</span><span class="pill '+cls+'">'+esc(b.status)+'</span></div>'+
+      (b.status==='success'?'<div class="row"><a class="btn o" style="margin:4px 0" href="'+esc(b.downloadUrl)+'">Download APK</a></div>':'')+
+      (b.status==='failed'?'<div class="row"><small style="color:var(--mu)">'+esc(b.error||'')+'</small></div>':'')
+    }).join('') : '<p class="s">No builds yet.</p>'
+  }catch(e){}
+}
+</script></body></html>

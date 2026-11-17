@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The backend (Firebase Admin SDK) does all real reads/writes and bypasses these rules.
+    // This is defense-in-depth only: a signed-in user may read their own user doc, nothing else.
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
